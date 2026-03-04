@@ -9,7 +9,10 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: false });
+const pool = new Pool({ 
+  connectionString: process.env.DATABASE_URL, 
+  ssl: { rejectUnauthorized: false } 
+});
 const JWT_SECRET = process.env.JWT_SECRET || 'secret123';
 
 async function initDB() {
@@ -105,16 +108,19 @@ app.get('/api/products', auth, async (req, res) => {
   const r = await pool.query('SELECT p.*,c.name as category_name FROM products p LEFT JOIN categories c ON c.id=p.category_id WHERE p.tenant_id=$1 AND p.is_active=true ORDER BY p.id DESC', [req.user.tenantId]);
   res.json(r.rows);
 });
+
 app.post('/api/products', auth, async (req, res) => {
   const { name, barcode, price, cost_price, stock, unit, image_url, category_id } = req.body;
   const r = await pool.query('INSERT INTO products (tenant_id,name,barcode,price,cost_price,stock,unit,image_url,category_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *', [req.user.tenantId,name,barcode,price||0,cost_price||0,stock||0,unit||'dona',image_url,category_id]);
   res.json(r.rows[0]);
 });
+
 app.put('/api/products/:id', auth, async (req, res) => {
   const { name, barcode, price, cost_price, stock, unit, image_url, category_id, is_active } = req.body;
   const r = await pool.query('UPDATE products SET name=$1,barcode=$2,price=$3,cost_price=$4,stock=$5,unit=$6,image_url=$7,category_id=$8,is_active=$9 WHERE id=$10 AND tenant_id=$11 RETURNING *', [name,barcode,price,cost_price,stock,unit,image_url,category_id,is_active!==false,req.params.id,req.user.tenantId]);
   res.json(r.rows[0]);
 });
+
 app.delete('/api/products/:id', auth, async (req, res) => {
   await pool.query('UPDATE products SET is_active=false WHERE id=$1 AND tenant_id=$2', [req.params.id,req.user.tenantId]);
   res.json({ ok: true });
@@ -124,16 +130,19 @@ app.get('/api/categories', auth, async (req, res) => {
   const r = await pool.query('SELECT * FROM categories WHERE tenant_id=$1 ORDER BY id', [req.user.tenantId]);
   res.json(r.rows);
 });
+
 app.post('/api/categories', auth, async (req, res) => {
   const { name, icon, color } = req.body;
   const r = await pool.query('INSERT INTO categories (tenant_id,name,icon,color) VALUES ($1,$2,$3,$4) RETURNING *', [req.user.tenantId,name,icon,color]);
   res.json(r.rows[0]);
 });
+
 app.put('/api/categories/:id', auth, async (req, res) => {
   const { name, icon, color } = req.body;
   const r = await pool.query('UPDATE categories SET name=$1,icon=$2,color=$3 WHERE id=$4 AND tenant_id=$5 RETURNING *', [name,icon,color,req.params.id,req.user.tenantId]);
   res.json(r.rows[0]);
 });
+
 app.delete('/api/categories/:id', auth, async (req, res) => {
   await pool.query('DELETE FROM categories WHERE id=$1 AND tenant_id=$2', [req.params.id,req.user.tenantId]);
   res.json({ ok: true });
@@ -143,6 +152,7 @@ app.get('/api/transactions', auth, async (req, res) => {
   const r = await pool.query('SELECT * FROM transactions WHERE tenant_id=$1 ORDER BY created_at DESC', [req.user.tenantId]);
   res.json(r.rows);
 });
+
 app.post('/api/transactions', auth, async (req, res) => {
   const { customer_name, customer_phone, total, profit, payment_method, items } = req.body;
   const r = await pool.query('INSERT INTO transactions (tenant_id,user_id,customer_name,customer_phone,total,profit,payment_method,items) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *',
@@ -156,6 +166,7 @@ app.get('/api/orders', auth, async (req, res) => {
   const r = await pool.query('SELECT o.*,t.customer_name,t.customer_phone,t.total,t.payment_method,t.items FROM orders o JOIN transactions t ON t.id=o.transaction_id WHERE o.tenant_id=$1 ORDER BY o.created_at DESC', [req.user.tenantId]);
   res.json(r.rows);
 });
+
 app.put('/api/orders/:id', auth, async (req, res) => {
   const r = await pool.query('UPDATE orders SET status=$1 WHERE id=$2 AND tenant_id=$3 RETURNING *', [req.body.status,req.params.id,req.user.tenantId]);
   res.json(r.rows[0]);
@@ -171,18 +182,15 @@ app.put('/api/tenant', auth, async (req, res) => {
   const r = await pool.query('UPDATE tenants SET name=$1,brand_color=$2,telegram_bot_token=$3,telegram_chat_id=$4 WHERE id=$5 RETURNING *', [name,brand_color,telegram_bot_token,telegram_chat_id,req.user.tenantId]);
   res.json(r.rows[0]);
 });
-app.get('/api/tenants', auth, async (req, res) => {
-  const r = await pool.query('SELECT id,name,slug FROM tenants ORDER BY id');
-  res.json(r.rows);
-});
 
 app.get('/api/stats', auth, async (req, res) => {
-  const [p, tr, o] = await Promise.all([
-    pool.query('SELECT COUNT(*) as count FROM products WHERE tenant_id=$1 AND is_active=true', [req.user.tenantId]),
-    pool.query('SELECT SUM(total) as revenue,SUM(profit) as profit,COUNT(*) as count FROM transactions WHERE tenant_id=$1', [req.user.tenantId]),
-    pool.query("SELECT COUNT(*) as count FROM orders WHERE tenant_id=$1 AND status='new'", [req.user.tenantId]),
-  ]);
-  res.json({ products: p.rows[0].count, revenue: tr.rows[0].revenue||0, profit: tr.rows[0].profit||0, transactions: tr.rows[0].count, new_orders: o.rows[0].count });
+  const r = await pool.query('SELECT SUM(total) as total_revenue, SUM(profit) as total_profit, COUNT(*) as total_transactions FROM transactions WHERE tenant_id=$1', [req.user.tenantId]);
+  res.json(r.rows[0]);
 });
 
-app.get('/', (req, res) => res.json({ status: 'ok' }));
+initDB().catch(console.error);
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Server ishga tushdi: ${PORT}`);
+});
